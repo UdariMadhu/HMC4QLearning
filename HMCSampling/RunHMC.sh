@@ -1,0 +1,1 @@
+python3 RunHMC.py --dim 3 --stepsize 0.02 --trlen 100 --burn 0 --sample 200 --cSig 50 --mean 0 0 0 --stddev 0.5 1 2
