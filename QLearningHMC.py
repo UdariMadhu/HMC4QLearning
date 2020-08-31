@@ -5,7 +5,7 @@ from scipy.stats import multivariate_normal
 import argparse
 
 EPSILON = 0.05
-GAMMA = 0.1
+GAMMA = 0.95
 
 
 def unfold(c, d):
@@ -134,7 +134,7 @@ def main():
     )
     parser.add_argument(
         "--scov",
-        type=int,
+        type=float,
         help="Convarince of Gaussian in state space. Keep ~1/2 of --ssize",
     )
     parser.add_argument(
@@ -152,7 +152,7 @@ def main():
     # setup
     np.random.seed(args.seed)
 
-    # create state-space and action space
+    # create state-space and action-space
     statespace, actionspace = build_spaces(args)
     Q = np.ones([statespace[0].size, actionspace[0].size])
     R = np.random.rand(statespace[0].size, actionspace[0].size)
@@ -163,6 +163,7 @@ def main():
 
     # run agent for specific steps
     for _ in range(args.steps):
+        cs = np.random.randint(0, statespace[0].size, args.samples) # current states
         ca = sampling_policy(cs, Q)  # current actions
         cr = R[cs, ca]  # current rewards
 
@@ -185,7 +186,10 @@ def main():
         )
 
         Q[cs, ca] = update
-        cs = [np.random.choice(len(p), p=p) for p in T]  # sample next state
+#         cs = [np.random.choice(len(p), p=p) for p in T]  # sample next state
+    
+    rank = np.linalg.matrix_rank(Q)
+    print("Rank",rank)
 
 
 if __name__ == "__main__":
