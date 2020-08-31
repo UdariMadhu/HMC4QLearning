@@ -44,7 +44,7 @@ def build_spaces(args):
     return statespace, actionspace
 
 
-def get_state_transition(states, actions, statespace, args):
+def get_state_transition(states, actions, statespace, biasmat, args):
     """
         Generate transition probability for each state-action pair
         Generating bias based on the states action pair
@@ -67,18 +67,15 @@ def get_state_transition(states, actions, statespace, args):
 
     neworigins = unfold(states, statespace.shape)  # add noise later
 
+    bias = biasmat[states, actions]
+    neworigins = (np.array(neworigins) + bias) % args.ssize
+
+    # ST =
     for i, _ in enumerate(states):
-        np.random.seed(
-            hash(sa[i].tostring()) % 2 ^ 30 + args.seed
-        )  # custom seed, fix bias for each state-space pair
-        bias = np.random.randint(
-            -args.max_bias, args.max_bias, args.sdim
-        )  # generate bias online
-        neworigin = (neworigins[i] + bias) % args.ssize
         m = np.meshgrid(
             *[
                 np.arange(o - e, args.ssize + o - e)
-                for e, o in zip(neworigin, index_origin)
+                for e, o in zip(neworigins[i], index_origin)
             ]
         )
         x = np.concatenate([e.reshape(-1, 1) for e in m], axis=-1)
@@ -159,6 +156,9 @@ def main():
     statespace, actionspace = build_spaces(args)
     Q = np.ones([statespace[0].size, actionspace[0].size])
     R = np.random.rand(statespace[0].size, actionspace[0].size)
+    B = np.random.randint(
+        -args.max_bias, args.max_bias, (statespace[0].size, actionspace[0].size)
+    )
     cs = np.random.randint(0, statespace[0].size, args.samples)  # current states
 
     # run agent for specific steps
@@ -166,7 +166,9 @@ def main():
         ca = sampling_policy(cs, Q)  # current actions
         cr = R[cs, ca]  # current rewards
 
-        T = get_state_transition(cs, ca, statespace[0], args)  # state-transition matrix
+        T = get_state_transition(
+            cs, ca, statespace[0], B, args
+        )  # state-transition matrix
 
         # update step
         update = cr + GAMMA * np.sum(
