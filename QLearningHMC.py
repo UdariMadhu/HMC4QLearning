@@ -168,7 +168,6 @@ def main():
 
     # run agent for specific steps
     for _ in range(args.steps):
-        np.random.seed(1)
         # cs = np.random.randint(0, statespace[0].size, args.samples) # current states
         ca = sampling_policy(cs, Q)  # current actions
         cr = R[cs, ca]  # current rewards
