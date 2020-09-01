@@ -33,6 +33,18 @@ def fold(c, d):
     return np.sum([k * np.prod(d[i + 1 :]) for i, k in enumerate(c)]).astype(np.int32)
 
 
+def foldParallel(c, d):
+    """
+        Map an array of index in [x, y, z, ...] co-ordinates to an int. Folding row-wise.
+        c (array): indexes in the n-dimensional space
+        d (list/tuple/array): shape of targeted n-dimensional space
+
+        Note: retuned index follows python zero-start convention i.e, c:[0, 0, 0,] will return 0 not 1.
+    """
+    p = np.array([np.prod(d[i + 1 :]) for i, _ in enumerate(d)])
+    return np.sum(c * p, -1).astype(np.int32)
+
+
 def build_spaces(args):
     srange = np.reshape(args.srange, (args.sdim, -1))
     arange = np.reshape(args.arange, (args.adim, -1))
@@ -52,13 +64,11 @@ def get_state_transition(states, actions, statespace, biasmat, args):
     nstates = statespace.size
     ST = np.zeros([len(states), nstates])
 
-    sa = np.c_[states, actions]  # state-action pair
-
     mp = np.meshgrid(
         *[np.arange(-args.ssize, args.ssize + 1) for _ in range(args.sdim)]
     )
     xp = np.concatenate([e.reshape(-1, 1) for e in mp], axis=-1)
-    index_origin = unfold([len(xp) // 2], mp[0].shape)[0]
+    index_origin = np.array(unfold([len(xp) // 2], mp[0].shape))
 
     # sample probs for 2 x state_space_size in each dimension
     p = multivariate_normal.pdf(
@@ -69,21 +79,14 @@ def get_state_transition(states, actions, statespace, biasmat, args):
 
     bias = biasmat[states, actions]
     neworigins = (np.array(neworigins) + bias) % args.ssize
+    left = index_origin - neworigins
 
-    # ST =
-    for i, _ in enumerate(states):
-        m = np.meshgrid(
-            *[
-                np.arange(o - e, args.ssize + o - e)
-                for e, o in zip(neworigins[i], index_origin)
-            ]
-        )
-        x = np.concatenate([e.reshape(-1, 1) for e in m], axis=-1)
-        x = [fold(e, mp[0].shape) for e in x]
-        ST[i] = p[x]
+    x = np.array(list(np.ndindex(*[args.ssize for i in range(args.sdim)])))
+    x = x + np.reshape(left, (-1, 1, args.sdim))
+    x = foldParallel(x.reshape(-1, args.sdim), mp[0].shape)
 
+    ST = np.reshape(p[x], ST.shape)
     ST /= np.sum(ST, axis=-1, keepdims=True)
-    np.random.seed(args.seed)  # switch back to original seed
     return ST
 
 
@@ -157,13 +160,16 @@ def main():
     Q = np.ones([statespace[0].size, actionspace[0].size])
     R = np.random.rand(statespace[0].size, actionspace[0].size)
     B = np.random.randint(
-        -args.max_bias, args.max_bias, (statespace[0].size, actionspace[0].size)
+        -args.max_bias,
+        args.max_bias,
+        (statespace[0].size, actionspace[0].size, args.sdim),
     )
     cs = np.random.randint(0, statespace[0].size, args.samples)  # current states
 
     # run agent for specific steps
     for _ in range(args.steps):
-        cs = np.random.randint(0, statespace[0].size, args.samples) # current states
+        np.random.seed(1)
+        # cs = np.random.randint(0, statespace[0].size, args.samples) # current states
         ca = sampling_policy(cs, Q)  # current actions
         cr = R[cs, ca]  # current rewards
 
@@ -186,10 +192,10 @@ def main():
         )
 
         Q[cs, ca] = update
-#         cs = [np.random.choice(len(p), p=p) for p in T]  # sample next state
-    
+        cs = [np.random.choice(len(p), p=p) for p in T]  # sample next state
+
     rank = np.linalg.matrix_rank(Q)
-    print("Rank",rank)
+    print("Rank", rank)
 
 
 if __name__ == "__main__":
