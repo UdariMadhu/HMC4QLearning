@@ -145,6 +145,7 @@ def main():
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--steps", type=int, default=1000, help="Number of time steps")
     parser.add_argument("--seed", type=int, default=27082020)
+    
     # HMC
     parser.add_argument(
         "--stepsize", type=float, default=3, help="step size for generating trajectory"
@@ -170,7 +171,7 @@ def main():
 
     # create state-space and action-space
     statespace, actionspace = build_spaces(args)
-    Q = np.ones([statespace[0].size, actionspace[0].size])
+    Q = np.zeros([statespace[0].size, actionspace[0].size])
     R = np.random.rand(statespace[0].size, actionspace[0].size)
     B = np.random.randint(
         -args.max_bias,
@@ -216,7 +217,7 @@ def main():
 
         hmcoords = [foldParallel(i, statespace[0].shape) for i in hmcoords]
 
-        # update
+        # update with HMC
         Q_max = np.max(Q, axis=-1)
         update = cr + GAMMA * np.array(
             [
@@ -233,11 +234,13 @@ def main():
         #     ),
         #     axis=-1,
         # )
-        # print(
-        #     "L2 norm of difference in Q-matrix: {:.3f}".format(
-        #         np.linalg.norm(Q[cs, ca] - update)
-        #     )
-        # )
+        # 
+        
+        print(
+            "L2 norm of difference in Q-matrix: {:.3f}".format(
+                np.linalg.norm(Q[cs, ca] - update)
+            )
+        )
 
         Q[cs, ca] = update
         cs = [np.random.choice(len(p), p=p) for p in T]  # sample next state
