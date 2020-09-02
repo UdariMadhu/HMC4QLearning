@@ -39,6 +39,27 @@ def getlogprobs(c):
         return log_prob(omega, c)
     return f
 
+def getHMCsamples(params_hmc, trjlen):
+    """
+        Generating HMC samples
+    """
+    coords_all_hmc = torch.cat(params_hmc).reshape(len(params_hmc),-1)
+    numSample = len(coords_all_hmc[:,1]) // trjlen
+    index = trjlen*torch.arange(numSample)
+    
+    return coords_all_hmc[index]
+
+
+# def getIIDsamples(params_hmc, trjlen):
+#     """
+#         Generating HMC samples
+#     """
+#     coords_all_hmc = torch.cat(params_hmc).reshape(len(params_hmc),-1)
+#     numSample = len(coords_all_hmc[:,1]) // trjlen
+#     index = trjlen*torch.arange(numSample)
+    
+#     return coords_all_hmc[index]
+
 
 def main():
     parser = argparse.ArgumentParser("HMC Sampling")
@@ -64,10 +85,7 @@ def main():
                                step_size=args.stepsize, num_steps_per_sample=args.trlen, burn=args.burn)
 
     # Get samples
-    coords_all_hmc = torch.cat(params_hmc).reshape(len(params_hmc),-1)
-    numSample = len(coords_all_hmc[:,1]) // args.trlen
-    index = args.trlen*torch.arange(numSample)
-    coords_hmc=coords_all_hmc[index]
+    coords_hmc=getHMCsamples(params_hmc, args.trlen)
     
     # IID sampling
     targetDis = torch.distributions.MultivariateNormal(mean, stddev.diag()**2)
