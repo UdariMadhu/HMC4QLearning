@@ -86,10 +86,6 @@ def leapfrog(params, momentum, log_prob_func, steps=10, step_size=0.1, jitter=0.
 
 
 def acceptance(h_old, h_new):
-    # if isinstance(h_old, tuple):
-    #     return float(-torch.log(h_new[0]) + torch.log(h_old[0]))
-    # else:
-    # return float(-torch.log(h_new) + torch.log(h_old))
     return float(-h_new + h_old)
 
 

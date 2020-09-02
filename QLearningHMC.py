@@ -4,6 +4,14 @@ import numpy as np
 from scipy.stats import multivariate_normal
 import argparse
 
+import sys
+sys.path.append("HMCSampling")
+from RunHMC import getHMCsamples, getlogprobs
+import torch
+import torch.nn as nn
+import hamiltorch
+
+
 EPSILON = 0.05
 GAMMA = 0.95
 
@@ -134,12 +142,26 @@ def main():
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--steps", type=int, default=1000, help="Number of time steps")
     parser.add_argument("--seed", type=int, default=27082020)
-
+    # HMC 
+    parser.add_argument(
+        "--stepsize", type=float, default=3, help="step size for generating trajectory"
+    )
+    parser.add_argument(
+        "--trlen", type=int, default=3, help="number of steps in the trajectory"
+    )
+    parser.add_argument("--burn", type=int, default=0, help="number of burn samples")
+    parser.add_argument("--hmcsample", type=int, default=200, help="number of samples in hmc")
+    parser.add_argument("--cSig", type=float, help="cutoff parameter for sigmoid")
+    parser.add_argument("--HMCseed", type=int, default=123)
+    
     args = parser.parse_args()
+    
     print(args)
-
+    
     # setup
-    np.random.seed(args.seed)
+#     np.random.seed(args.HMCseed)
+    hamiltorch.set_random_seed(args.HMCseed)
+    params_init = torch.zeros(args.sdim)
 
     # create state-space and action-space
     statespace, actionspace = build_spaces(args)
@@ -161,7 +183,25 @@ def main():
         T = get_state_transition(
             cs, ca, statespace[0], B, args
         )  # state-transition matrix
-
+        hmcorigin = unfold(cs, statespace[0].shape) + B[cs, ca]
+            
+        # HMC
+        hmcoords = []
+        for i, _ in enumerate(cs):
+            params_hmc = hamiltorch.sample(
+                log_prob_func=getlogprobs(c=args.cSig, mean=hmcorigin[i], stddev=args.scov * np.eye(args.sdim)),
+                params_init=params_init,
+                num_samples=args.hmcsample,
+                step_size=args.stepsize,
+                num_steps_per_sample=args.trlen,
+                burn=args.burn,
+            )
+            coords_hmc=getHMCsamples(params_hmc, args.trlen)
+            print(coords_hmc.shape)
+            hmcoords.append(coords_hmc.data.numpy())
+        hmcoords = np.array(hmcoords)
+        print(hmcoords.shape)
+        
         # update step
         update = cr + GAMMA * np.sum(
             T

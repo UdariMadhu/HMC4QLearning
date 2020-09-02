@@ -8,7 +8,7 @@ hamiltorch.set_random_seed(123)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def log_prob(omega, c=None):
+def log_prob(omega, c=None, mean=None, stddev=None):
     """
         Sampling from a trucated Gaussian distribution
     """
@@ -23,13 +23,13 @@ def log_prob(omega, c=None):
         return normal_log.sum()
 
 
-def getlogprobs(c, mean=None, stddev=None):
+def getlogprobs(c, mean, stddev):
     """
         Wrapper for passing parameters of trucated Gaussian distribution
     """
 
     def f(omega):
-        return log_prob(omega, c)
+        return log_prob(omega, c, mean, stddev)
 
     return f
 
@@ -42,17 +42,6 @@ def getHMCsamples(params_hmc, trjlen):
     index = trjlen*torch.arange(numSample)
     
     return coords_all_hmc[index]
-
-
-# def getIIDsamples(params_hmc, trjlen):
-#     """
-#         Generating HMC samples
-#     """
-#     coords_all_hmc = torch.cat(params_hmc).reshape(len(params_hmc),-1)
-#     numSample = len(coords_all_hmc[:,1]) // trjlen
-#     index = trjlen*torch.arange(numSample)
-    
-#     return coords_all_hmc[index]
 
 
 def main():
@@ -106,7 +95,7 @@ def main():
     coords_hmc=getHMCsamples(params_hmc, args.trlen)
     
     # IID sampling
-    targetDis = torch.distributions.MultivariateNormal(mean, stddev.diag() ** 2)
+    targetDis = torch.distributions.MultivariateNormal(args.mean, args.stddev.diag() ** 2)
     sample_iid = targetDis.sample((8 * args.sample,))
     norm_iid = torch.norm(sample_iid, dim=-1) ** 2
     ind_iid = torch.where(norm_iid <= 1)[0]
@@ -120,7 +109,7 @@ def main():
 
     print(coords_hmc)
 
-    print("True mean:            ", mean)
+    print("True mean:            ", args.mean)
     print("HMC mean:            ", coords_hmc.mean(0))
     print("IID mean:            ", coords_iid.mean(0))
 
