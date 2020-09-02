@@ -3,8 +3,11 @@
 import numpy as np
 from scipy.stats import multivariate_normal
 import argparse
+import math
+import torch
 
 import sys
+
 sys.path.append("HMCSampling")
 from RunHMC import getHMCsamples, getlogprobs
 import torch
@@ -142,7 +145,7 @@ def main():
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--steps", type=int, default=1000, help="Number of time steps")
     parser.add_argument("--seed", type=int, default=27082020)
-    # HMC 
+    # HMC
     parser.add_argument(
         "--stepsize", type=float, default=3, help="step size for generating trajectory"
     )
@@ -150,16 +153,18 @@ def main():
         "--trlen", type=int, default=3, help="number of steps in the trajectory"
     )
     parser.add_argument("--burn", type=int, default=0, help="number of burn samples")
-    parser.add_argument("--hmcsample", type=int, default=200, help="number of samples in hmc")
+    parser.add_argument(
+        "--hmcsample", type=int, default=200, help="number of samples in hmc"
+    )
     parser.add_argument("--cSig", type=float, help="cutoff parameter for sigmoid")
     parser.add_argument("--HMCseed", type=int, default=123)
-    
+
     args = parser.parse_args()
-    
+
     print(args)
-    
+
     # setup
-#     np.random.seed(args.HMCseed)
+    #     np.random.seed(args.HMCseed)
     hamiltorch.set_random_seed(args.HMCseed)
     params_init = torch.zeros(args.sdim)
 
@@ -183,38 +188,56 @@ def main():
         T = get_state_transition(
             cs, ca, statespace[0], B, args
         )  # state-transition matrix
-        hmcorigin = unfold(cs, statespace[0].shape) + B[cs, ca]
-            
+
+        hmcorigin = torch.tensor(
+            (np.array(unfold(cs, statespace[0].shape)) + B[cs, ca]) % args.ssize
+        )
+
         # HMC
         hmcoords = []
         for i, _ in enumerate(cs):
             params_hmc = hamiltorch.sample(
-                log_prob_func=getlogprobs(c=args.cSig, mean=hmcorigin[i], stddev=args.scov * np.eye(args.sdim)),
+                log_prob_func=getlogprobs(
+                    c=args.cSig,
+                    mean=hmcorigin[i].float(),
+                    stddev=torch.tensor(
+                        math.sqrt(args.scov) * np.eye(args.sdim)
+                    ).float(),
+                ),
                 params_init=params_init,
                 num_samples=args.hmcsample,
                 step_size=args.stepsize,
                 num_steps_per_sample=args.trlen,
                 burn=args.burn,
             )
-            coords_hmc=getHMCsamples(params_hmc, args.trlen)
+            coords_hmc = getHMCsamples(params_hmc, args.trlen)
             print(coords_hmc.shape)
             hmcoords.append(coords_hmc.data.numpy())
-        hmcoords = np.array(hmcoords)
-        print(hmcoords.shape)
-        
-        # update step
-        update = cr + GAMMA * np.sum(
-            T
-            * np.concatenate(
-                [np.max(Q, axis=-1, keepdims=True).T for _ in range(args.samples)]
-            ),
-            axis=-1,
+
+        hmcoords = [foldParallel(i, statespace[0].shape) for i in hmcoords]
+
+        # update
+        Q_max = np.max(Q, axis=-1)
+        update = cr + GAMMA * np.array(
+            [
+                np.sum(T[row][hmcoords[row]] * Q_max[hmcoords[row]])
+                for row in range(T.shape[0])
+            ]
         )
-        print(
-            "L2 norm of difference in Q-matrix: {:.3f}".format(
-                np.linalg.norm(Q[cs, ca] - update)
-            )
-        )
+
+        # update step without hmc
+        # update = cr + GAMMA * np.sum(
+        #     T
+        #     * np.concatenate(
+        #         [np.max(Q, axis=-1, keepdims=True).T for _ in range(args.samples)]
+        #     ),
+        #     axis=-1,
+        # )
+        # print(
+        #     "L2 norm of difference in Q-matrix: {:.3f}".format(
+        #         np.linalg.norm(Q[cs, ca] - update)
+        #     )
+        # )
 
         Q[cs, ca] = update
         cs = [np.random.choice(len(p), p=p) for p in T]  # sample next state

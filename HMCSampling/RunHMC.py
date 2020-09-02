@@ -12,9 +12,12 @@ def log_prob(omega, c=None, mean=None, stddev=None):
     """
         Sampling from a trucated Gaussian distribution
     """
-    normal_log = torch.distributions.MultivariateNormal(
-        mean, torch.diag(stddev ** 2)
-    ).log_prob(omega)
+    if len(stddev.shape) == 1:
+        cov = torch.diag(stddev ** 2)
+        print("Create Covariance matrix, assuming input was stddev")
+    else:
+        cov = stddev ** 2
+    normal_log = torch.distributions.MultivariateNormal(mean, cov).log_prob(omega)
 
     if c:
         sigmoid_log = torch.nn.functional.logsigmoid(c * (1 - torch.norm(omega) ** 2))
@@ -33,14 +36,15 @@ def getlogprobs(c, mean, stddev):
 
     return f
 
+
 def getHMCsamples(params_hmc, trjlen):
     """
         Generating HMC samples
     """
-    coords_all_hmc = torch.cat(params_hmc).reshape(len(params_hmc),-1)
-    numSample = len(coords_all_hmc[:,1]) // trjlen
-    index = trjlen*torch.arange(numSample)
-    
+    coords_all_hmc = torch.cat(params_hmc).reshape(len(params_hmc), -1)
+    numSample = len(coords_all_hmc[:, 1]) // trjlen
+    index = trjlen * torch.arange(numSample)
+
     return coords_all_hmc[index]
 
 
@@ -92,10 +96,12 @@ def main():
     )
 
     # Get samples
-    coords_hmc=getHMCsamples(params_hmc, args.trlen)
-    
+    coords_hmc = getHMCsamples(params_hmc, args.trlen)
+
     # IID sampling
-    targetDis = torch.distributions.MultivariateNormal(args.mean, args.stddev.diag() ** 2)
+    targetDis = torch.distributions.MultivariateNormal(
+        args.mean, args.stddev.diag() ** 2
+    )
     sample_iid = targetDis.sample((8 * args.sample,))
     norm_iid = torch.norm(sample_iid, dim=-1) ** 2
     ind_iid = torch.where(norm_iid <= 1)[0]
