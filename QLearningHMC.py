@@ -19,20 +19,6 @@ def unfold(c, d):
     return [list(np.ndindex(*d))[i] for i in c]
 
 
-def fold(c, d):
-    """
-        Map an index in [x, y, z, ...] co-ordinates to an int. Folding row-wise.
-        c (list/tuple/array): index in the n-dimensional space
-        d (list/tuple/array): shape of targeted n-dimensional space
-
-        Note: retuned index follows python zero-start convention i.e, c:[0, 0, 0,] will return 0 not 1.
-    """
-    assert np.prod(
-        [i < j for (i, j) in zip(c, d)]
-    ), "index start of zero, thus can't be equal to shape in any dim"
-    return np.sum([k * np.prod(d[i + 1 :]) for i, k in enumerate(c)]).astype(np.int32)
-
-
 def foldParallel(c, d):
     """
         Map an array of index in [x, y, z, ...] co-ordinates to an int. Folding row-wise.
