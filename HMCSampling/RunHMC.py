@@ -8,31 +8,34 @@ hamiltorch.set_random_seed(123)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def log_prob(omega, c=None, mean=None, stddev=None):
+def log_prob(omega, c=None, mean=None, stddev=None, srange=None):
     """
         Sampling from a trucated Gaussian distribution
     """
+
     if len(stddev.shape) == 1:
         cov = torch.diag(stddev ** 2)
         print("Create Covariance matrix, assuming input was stddev")
     else:
         cov = stddev ** 2
-    normal_log = torch.distributions.MultivariateNormal(mean, cov).log_prob(omega)
 
+    normal_log = torch.distributions.MultivariateNormal(mean, cov).log_prob(omega)
     if c:
-        sigmoid_log = torch.nn.functional.logsigmoid(c * (1 - torch.norm(omega) ** 2))
-        return (normal_log + sigmoid_log).sum()
+        s = torch.nn.functional.logsigmoid(
+            c * (omega - srange[:, 0])
+        ) + torch.nn.functional.logsigmoid(c * (srange[:, 1] - omega))
+        return (normal_log + s).sum()
     else:
         return normal_log.sum()
 
 
-def getlogprobs(c, mean, stddev):
+def getlogprobs(c, mean, stddev, srange):
     """
         Wrapper for passing parameters of trucated Gaussian distribution
     """
 
     def f(omega):
-        return log_prob(omega, c, mean, stddev)
+        return log_prob(omega, c, mean, stddev, srange)
 
     return f
 

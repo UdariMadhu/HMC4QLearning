@@ -135,6 +135,7 @@ def main():
     parser.add_argument(
         "--scov",
         type=float,
+        nargs="+",
         help="Convarince of Gaussian in state space. Keep ~1/2 of --ssize",
     )
     parser.add_argument(
@@ -145,7 +146,7 @@ def main():
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--steps", type=int, default=1000, help="Number of time steps")
     parser.add_argument("--seed", type=int, default=27082020)
-    
+
     # HMC
     parser.add_argument(
         "--stepsize", type=float, default=3, help="step size for generating trajectory"
@@ -159,8 +160,12 @@ def main():
     )
     parser.add_argument("--cSig", type=float, help="cutoff parameter for sigmoid")
     parser.add_argument("--HMCseed", type=int, default=123)
+    parser.add_argument(
+        "--mode", type=str, default="complete", choices=("complete", "hmc", "iid")
+    )
 
     args = parser.parse_args()
+    args.scov = np.array(args.scov)
 
     print(args)
 
@@ -190,52 +195,73 @@ def main():
             cs, ca, statespace[0], B, args
         )  # state-transition matrix
 
-        hmcorigin = torch.tensor(
-            (np.array(unfold(cs, statespace[0].shape)) + B[cs, ca]) % args.ssize
-        )
+        if args.mode == "hmc":
+            hmcorigin = (
+                np.array(unfold(cs, statespace[0].shape)) + B[cs, ca]
+            ) % args.ssize
 
-        # HMC
-        hmcoords = []
-        for i, _ in enumerate(cs):
-            params_hmc = hamiltorch.sample(
-                log_prob_func=getlogprobs(
-                    c=args.cSig,
-                    mean=hmcorigin[i].float(),
-                    stddev=torch.tensor(
-                        math.sqrt(args.scov) * np.eye(args.sdim)
-                    ).float(),
-                ),
-                params_init=params_init,
-                num_samples=args.hmcsample,
-                step_size=args.stepsize,
-                num_steps_per_sample=args.trlen,
-                burn=args.burn,
+            hmcorigin = [hmcorigin[:, i] for i in range(hmcorigin.shape[-1])]
+            statesrange = np.reshape(args.srange, (args.sdim, -1))
+
+            hmcstdev = torch.tensor(
+                np.sqrt(args.scov)
+                * (statesrange[:, 1] - statesrange[:, 0])
+                * np.eye(args.sdim)
+            ).float()
+            hmcorigin = torch.tensor(
+                np.array([s[hmcorigin] for s in statespace])
+            ).transpose(1, 0)
+
+            hmcoords = []
+            for i, _ in enumerate(cs):
+                params_hmc = hamiltorch.sample(
+                    log_prob_func=getlogprobs(
+                        c=args.cSig,
+                        mean=hmcorigin[i].float(),
+                        stddev=hmcstdev,
+                        srange=torch.tensor(statesrange).float(),
+                    ),
+                    params_init=params_init,
+                    num_samples=args.hmcsample,
+                    step_size=args.stepsize,
+                    num_steps_per_sample=args.trlen,
+                    burn=args.burn,
+                    srange=torch.tensor(statesrange).float(),
+                )
+                coords_hmc = getHMCsamples(params_hmc, args.trlen).data.numpy()
+
+                # map to closest and convert to co-ordinates
+                sr = np.array([np.linspace(a, b, args.ssize) for (a, b) in statesrange])
+                coords_hmc = np.array(
+                    [
+                        np.argmin(np.abs(coords_hmc[:, i : i + 1] - sr[i : i + 1]), -1)
+                        for i in range(args.sdim)
+                    ]
+                ).T
+
+                hmcoords.append(coords_hmc)
+
+            hmcoords = [foldParallel(i, statespace[0].shape) for i in hmcoords]
+
+            # update with HMC
+            Q_max = np.max(Q, axis=-1)
+            update = cr + GAMMA * np.array(
+                [
+                    np.sum(T[row][hmcoords[row]] * Q_max[hmcoords[row]])
+                    for row in range(T.shape[0])
+                ]
             )
-            coords_hmc = getHMCsamples(params_hmc, args.trlen)
-            print(coords_hmc.shape)
-            hmcoords.append(coords_hmc.data.numpy())
-
-        hmcoords = [foldParallel(i, statespace[0].shape) for i in hmcoords]
-
-        # update with HMC
-        Q_max = np.max(Q, axis=-1)
-        update = cr + GAMMA * np.array(
-            [
-                np.sum(T[row][hmcoords[row]] * Q_max[hmcoords[row]])
-                for row in range(T.shape[0])
-            ]
-        )
 
         # update step without hmc
-        # update = cr + GAMMA * np.sum(
-        #     T
-        #     * np.concatenate(
-        #         [np.max(Q, axis=-1, keepdims=True).T for _ in range(args.samples)]
-        #     ),
-        #     axis=-1,
-        # )
-        # 
-        
+        if args.mode == "complete":
+            update = cr + GAMMA * np.sum(
+                T
+                * np.concatenate(
+                    [np.max(Q, axis=-1, keepdims=True).T for _ in range(args.samples)]
+                ),
+                axis=-1,
+            )
+
         print(
             "L2 norm of difference in Q-matrix: {:.3f}".format(
                 np.linalg.norm(Q[cs, ca] - update)
