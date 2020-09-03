@@ -141,7 +141,7 @@ def main():
     parser.add_argument(
         "--max-bias",
         type=int,
-        help="Maximum bias (shift) in the gaussian distribution for state-transition. ",
+        help="Maximum bias (shift) in the gaussian distribution for state-transition. Keep --ssize",
     )
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--steps", type=int, default=1000, help="Number of time steps")
@@ -158,7 +158,7 @@ def main():
     parser.add_argument(
         "--hmcsample", type=int, default=200, help="number of samples in hmc"
     )
-    parser.add_argument("--cSig", type=float, help="cutoff parameter for sigmoid")
+    parser.add_argument("--cSig", type=float, default=50, help="cutoff parameter for sigmoid")
     parser.add_argument("--HMCseed", type=int, default=123)
     parser.add_argument(
         "--mode", type=str, default="complete", choices=("complete", "hmc", "iid")
@@ -170,7 +170,6 @@ def main():
     print(args)
 
     # setup
-    #     np.random.seed(args.HMCseed)
     hamiltorch.set_random_seed(args.HMCseed)
     params_init = torch.zeros(args.sdim)
 
@@ -187,8 +186,12 @@ def main():
 
     # run agent for specific steps
     for _ in range(args.steps):
-        # cs = np.random.randint(0, statespace[0].size, args.samples) # current states
-        ca = sampling_policy(cs, Q)  # current actions
+        
+        # randomly choosing state-action pairs
+        cs = np.random.randint(0, statespace[0].size, args.samples) # current states
+        ca = np.random.randint(0, actionspace[0].size, args.samples) # current states
+        
+#         ca = sampling_policy(cs, Q)  # current actions
         cr = R[cs, ca]  # current rewards
 
         T = get_state_transition(
