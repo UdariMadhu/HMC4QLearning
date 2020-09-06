@@ -11,13 +11,7 @@ class Sampler(Enum):
     
 
 def collect_gradients(log_prob, params):
-    if isinstance(log_prob, tuple):
-        log_prob[0].backward()
-        params_list = list(log_prob[1])
-        params = torch.cat([p.flatten() for p in params_list])
-        params.grad = torch.cat([p.grad.flatten() for p in params_list])
-    else:
-        params.grad = torch.autograd.grad(log_prob, params)[0]
+    params.grad = torch.autograd.grad(log_prob.sum(), params)[0]
     return params
 
 
@@ -48,7 +42,7 @@ def leapfrog(
     step_size=0.1,
     inv_mass=None,
 ):
-
+    # params: shape (N, sdim)
 
     def params_grad(p):
         p = p.detach().requires_grad_()
@@ -92,21 +86,19 @@ def hamiltonian(
 ):
 
     log_prob = log_prob_func(params)
-
-    if util.has_nan_or_inf(log_prob):
-        print("Invalid log_prob: {}, params: {}".format(log_prob, params))
-        raise util.LogProbError()
-
     potential = -log_prob
+    
     if inv_mass is None:
-        kinetic = 0.5 * torch.dot(momentum, momentum)
+        kinetic = 0.5 * torch.sum(momentum ** 2, dim = -1)
+        
     else:
         if len(inv_mass.shape) == 2:
+            # Have not checked for parallel
             kinetic = 0.5 * torch.matmul(
                 momentum.view(1, -1), torch.matmul(inv_mass, momentum.view(-1, 1))
             ).view(-1)
         else:
-            kinetic = 0.5 * torch.dot(momentum, inv_mass * momentum)
+            kinetic = 0.5 * inv_mass * torch.sum(momentum ** 2, dim = -1)
     hamiltonian = potential + kinetic
 
     return hamiltonian

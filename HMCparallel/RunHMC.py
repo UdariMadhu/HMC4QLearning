@@ -12,22 +12,18 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def log_prob(omega, c=None, mean=None, stddev=None, srange=None):
     """
         Sampling from a trucated Gaussian distribution
+        mean: shape-(N, sdim)
+        cov: shape-(sdim, sdim), assuming identical convariance for all samples
     """
 
-    if len(stddev.shape) == 1:
-        cov = torch.diag(stddev ** 2)
-        print("Create Covariance matrix, assuming input was stddev")
-    else:
-        cov = stddev ** 2
-
+    cov = stddev ** 2
     normal_log = torch.distributions.MultivariateNormal(mean, cov).log_prob(omega)
+    
     if c:
-        s = torch.nn.functional.logsigmoid(
-            c * (omega - srange[:, 0])
-        ) + torch.nn.functional.logsigmoid(c * (srange[:, 1] - omega))
-        return (normal_log + s).sum()
+        s = torch.nn.functional.logsigmoid(c * (omega - srange[:, 0].view(1, -1))).sum(-1) + torch.nn.functional.logsigmoid(c * (srange[:, 1].view(1, -1) - omega)).sum(-1)
+        return normal_log + s
     else:
-        return normal_log.sum()
+        return normal_log
 
 
 def getlogprobs(c, mean, stddev, srange):
