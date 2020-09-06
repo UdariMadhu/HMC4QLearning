@@ -8,7 +8,7 @@ from . import util
 
 class Sampler(Enum):
     HMC = 1
-    
+
 
 def collect_gradients(log_prob, params):
     params.grad = torch.autograd.grad(log_prob.sum(), params)[0]
@@ -16,8 +16,7 @@ def collect_gradients(log_prob, params):
 
 
 def gibbs(
-    params,
-    mass=None,
+    params, mass=None,
 ):
 
     if mass is None:
@@ -35,12 +34,7 @@ def gibbs(
 
 
 def leapfrog(
-    params,
-    momentum,
-    log_prob_func,
-    steps=10,
-    step_size=0.1,
-    inv_mass=None,
+    params, momentum, log_prob_func, steps=10, step_size=0.1, inv_mass=None,
 ):
     # params: shape (N, sdim)
 
@@ -75,22 +69,19 @@ def leapfrog(
 
 
 def acceptance(h_old, h_new):
-    return float(-h_new + h_old)
+    return (-h_new + h_old).float()
 
 
 def hamiltonian(
-    params,
-    momentum,
-    log_prob_func,
-    inv_mass=None,
+    params, momentum, log_prob_func, inv_mass=None,
 ):
 
     log_prob = log_prob_func(params)
     potential = -log_prob
-    
+
     if inv_mass is None:
-        kinetic = 0.5 * torch.sum(momentum ** 2, dim = -1)
-        
+        kinetic = 0.5 * torch.sum(momentum ** 2, dim=-1)
+
     else:
         if len(inv_mass.shape) == 2:
             # Have not checked for parallel
@@ -98,7 +89,7 @@ def hamiltonian(
                 momentum.view(1, -1), torch.matmul(inv_mass, momentum.view(-1, 1))
             ).view(-1)
         else:
-            kinetic = 0.5 * inv_mass * torch.sum(momentum ** 2, dim = -1)
+            kinetic = 0.5 * inv_mass * torch.sum(momentum ** 2, dim=-1)
     hamiltonian = potential + kinetic
 
     return hamiltonian
@@ -124,30 +115,21 @@ def sample(
             mass = 1 / inv_mass
 
     params = params_init.clone().requires_grad_()
-    ret_params = [params.clone()]
-    num_rejected = 0
-    
-    hmcSamples = []
-    
-    util.progress_bar_init(
-        "Sampling HMC", num_samples, "Samples"
-    )
-    
-    
+    ret_params = [[c.clone()] for c in params]
+
+    list(torch.split(params.clone(), 1, dim=0))
+    num_rejected = [0 for _ in range(len(params))]
+
+    hmcSamples = [[] for _ in range(len(params))]
+
+    util.progress_bar_init("Sampling HMC", num_samples, "Samples")
+
     for n in range(num_samples):
         util.progress_bar_update(n)
 
-        momentum = gibbs(
-            params,
-            mass=mass,
-        )
+        momentum = gibbs(params, mass=mass,)
 
-        ham = hamiltonian(
-            params,
-            momentum,
-            log_prob_func,
-            inv_mass=inv_mass,
-        )
+        ham = hamiltonian(params, momentum, log_prob_func, inv_mass=inv_mass,)
 
         leapfrog_params, leapfrog_momenta = leapfrog(
             params,
@@ -160,42 +142,39 @@ def sample(
 
         params = leapfrog_params[-1].detach().requires_grad_()
         momentum = leapfrog_momenta[-1]
-        
-        new_ham = hamiltonian(
-            params,
-            momentum,
-            log_prob_func,
-            inv_mass=inv_mass,
+
+        new_ham = hamiltonian(params, momentum, log_prob_func, inv_mass=inv_mass,)
+
+        rho = torch.min(torch.zeros_like(ham), acceptance(ham, new_ham))
+
+        condition1 = (rho > torch.log(torch.rand(len(rho)))).float()
+        condition2 = torch.prod(
+            torch.cat(
+                [
+                    (
+                        (srange[i, 0] <= params[:, i]).float()
+                        * (params[:, i] <= srange[i, 1]).float()
+                    ).view(1, -1)
+                    for i in range(len(srange))
+                ]
+            ),
+            dim=0,
         )
 
-        rho = min(0.0, acceptance(ham, new_ham))
+        condition = condition1 * condition2
 
-        if (
-            rho >= torch.log(torch.rand(1))
-            and torch.prod(
-                torch.tensor(
-                    [
-                        srange[i, 0] <= params[i] <= srange[i, 1]
-                        for i in range(len(srange))
-                    ]
-                )
-            ).item()
-        ):
-
-            if n > burn:
-                ret_params.extend(leapfrog_params)
-                hmcSamples.append(ret_params[-1])
-
-        else:
-            num_rejected += 1
-            params = ret_params[-1]
-                
+        for c in range(len(params)):
+            if condition[c]:
+                if n > burn:
+                    ret_params[c].extend(leapfrog_params[c])
+                    hmcSamples[c].append(leapfrog_params[c])
+            else:
+                num_rejected[c] += 1
+                params[c] = ret_params[c][-1]
 
     util.progress_bar_end(
         "Acceptance Rate {:.2f}".format(1 - num_rejected / num_samples)
     )  # need to adapt for burn
 
     return hmcSamples
-
-
 
