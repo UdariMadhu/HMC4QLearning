@@ -1,5 +1,6 @@
 # The code for running HMC
 
+import numpy as np
 import torch
 import hamiltorch
 import argparse
@@ -44,18 +45,42 @@ def getHMCsamples(params_hmc, trjlen):
     """
         Generating HMC samples
     """
-    coords_all_hmc = torch.cat(params_hmc).reshape(len(params_hmc), -1)
-    numSample = len(coords_all_hmc[:, 1]) // trjlen
-    index = trjlen * torch.arange(numSample)
+    params_hmc = torch.cat(params_hmc).reshape(len(params_hmc), -1)
 
-    return coords_all_hmc[index]
+    return params_hmc
 
 
 def main():
-    parser = argparse.ArgumentParser("HMC Sampling")
+    parser = argparse.ArgumentParser("Q-learning with HMC")
+    parser.add_argument("--sdim", type=int, default=2, help="dimension of state space")
     parser.add_argument(
-        "--dim", type=int, default=3, help="dimension of probability space"
+        "--srange",
+        nargs="+",
+        type=float,
+        help="range of state space. --srange -10 10 -20 20 -30 30 -40 40 will set range of\
+            1st, 2nd, 3rd, 4th dimension to [-10, 10], [-20, 20], [-30, 30], [-40, 40]",
     )
+    parser.add_argument(
+        "--ssize",
+        type=int,
+        help="Number of discrete values in each dimension of state space",
+    )
+    parser.add_argument(
+        "--scov",
+        type=float,
+        nargs="+",
+        help="Convarince of Gaussian ",
+    )
+    parser.add_argument(
+        "--mean",
+        type=float,
+        nargs="+",
+        help="Mean of Gaussian ",
+    )
+    parser.add_argument("--samples", type=int, default=100)
+
+
+    # HMC
     parser.add_argument(
         "--stepsize", type=float, default=3, help="step size for generating trajectory"
     )
@@ -63,60 +88,81 @@ def main():
         "--trlen", type=int, default=3, help="number of steps in the trajectory"
     )
     parser.add_argument("--burn", type=int, default=0, help="number of burn samples")
-    parser.add_argument("--sample", type=int, default=200, help="number of samples")
-    parser.add_argument("--cSig", type=float, help="cutoff parameter for sigmoid")
     parser.add_argument(
-        "--mean", nargs="+", type=float, help="mean of the Probability distribution"
+        "--hmcsample", type=int, default=200, help="number of samples in hmc"
     )
-    parser.add_argument(
-        "--stddev",
-        nargs="+",
-        type=float,
-        help="variance of the Probability distribution",
-    )
+    parser.add_argument("--cSig", type=float, default=50, help="cutoff parameter for sigmoid")
+    parser.add_argument("--HMCseed", type=int, default=123)
+
 
     args = parser.parse_args()
     print(args)
 
-    args.mean = torch.tensor(args.mean)
-    args.stddev = torch.tensor(args.stddev)
-    # mean = torch.tensor([0.0, 0.0, 0.0])
-    # stddev = torch.tensor([0.5, 1.0, 2.0])
+    args.scov = np.array(args.scov)
+    
+    # setup
+    hamiltorch.set_random_seed(args.HMCseed)
+    params_init = torch.zeros(args.sdim)
+    
+    statesrange = np.reshape(args.srange, (args.sdim, -1))
+    print(statesrange)
 
-    # Run HMC
-    hamiltorch.set_random_seed(123)
-    params_init = torch.zeros(args.dim)
-    #     mean = torch.tensor(args.mean)
-    #     stddev = torch.tensor(args.stddev)
+    hmcstdev = torch.tensor(
+                np.sqrt(args.scov)
+                * (statesrange[:, 1] - statesrange[:, 0])
+                * np.eye(args.sdim)
+            ).float()
 
+    hmcmean = torch.tensor(args.mean).float()
+    
     params_hmc = hamiltorch.sample(
-        log_prob_func=getlogprobs(c=args.cSig, mean=args.mean, stddev=args.stddev),
-        params_init=params_init,
-        num_samples=args.sample,
-        step_size=args.stepsize,
-        num_steps_per_sample=args.trlen,
-        burn=args.burn,
-    )
-
-    # Get samples
-    coords_hmc = getHMCsamples(params_hmc, args.trlen)
+                    log_prob_func=getlogprobs(
+                        c=args.cSig,
+                        mean=hmcmean,
+                        stddev=hmcstdev,
+                        srange=torch.tensor(statesrange).float(),
+                    ),
+                    params_init=params_init,
+                    num_samples=args.hmcsample,
+                    step_size=args.stepsize,
+                    num_steps_per_sample=args.trlen,
+                    burn=args.burn,
+                    srange=torch.tensor(statesrange).float(),
+                )
+                
+    coords_hmc = getHMCsamples(params_hmc, args.trlen).data.numpy() 
+    
 
     # IID sampling
     targetDis = torch.distributions.MultivariateNormal(
-        args.mean, args.stddev.diag() ** 2
+        hmcmean, hmcstdev ** 2
     )
-    sample_iid = targetDis.sample((8 * args.sample,))
-    norm_iid = torch.norm(sample_iid, dim=-1) ** 2
-    ind_iid = torch.where(norm_iid <= 1)[0]
-    ind_iid = ind_iid[: len(coords_hmc[:, 0])]
-    coords_iid = sample_iid[ind_iid]
+    
+    sample_iid = targetDis.sample((20 * args.hmcsample,))
+    
+    ind_iid = torch.prod(
+                    torch.cat(
+                        [
+                           ((statesrange[i, 0] <= sample_iid[:, i]).float() * (sample_iid[:, i] <= statesrange[i, 1]).float()).view(1, -1)
+                            for i in range(args.sdim)
+                        ]
+                    ), dim=0
+                ).nonzero()[:, 0]
+
+    print(ind_iid.shape, len(coords_hmc[:, 0]))
+    coords_iid = sample_iid[ind_iid[: len(coords_hmc[:, 0])]]
+
+    
+    coords_hmc = torch.tensor(coords_hmc)
 
     # Round off HMC and IID samples
+    
     discritise = 1
     coords_hmc = torch.round(coords_hmc * 10 ** discritise) / 10 ** discritise
     coords_iid = torch.round(coords_iid * 10 ** discritise) / 10 ** discritise
 
-    print(coords_hmc)
+    print(coords_hmc.shape)
+    print(coords_iid.shape)
 
     print("True mean:            ", args.mean)
     print("HMC mean:            ", coords_hmc.mean(0))

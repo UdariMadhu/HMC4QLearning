@@ -235,11 +235,13 @@ def main():
         T = get_state_transition(
             cs, ca, statespace[0], B, args
         )  # state-transition matrix
+        
+        Q_max = np.max(Q, axis=-1)
 
         if args.mode == "hmc":
-            hmcorigin = (
-                np.array(unfold(cs, statespace[0].shape)) + B[cs, ca]
-            ) % args.ssize
+            hmcorigin = np.clip(
+                np.array(unfold(cs, statespace[0].shape)) + B[cs, ca], 0, args.ssize-1
+            )
 
             hmcorigin = [hmcorigin[:, i] for i in range(hmcorigin.shape[-1])]
             statesrange = np.reshape(args.srange, (args.sdim, -1))
@@ -285,10 +287,18 @@ def main():
             hmcoords = [foldParallel(i, statespace[0].shape) for i in hmcoords]
 
             # update with HMC
-            Q_max = np.max(Q, axis=-1)
             update = cr + GAMMA * np.array(
                 [
                     np.sum(T[row][hmcoords[row]] * Q_max[hmcoords[row]])
+                    for row in range(T.shape[0])
+                ]
+            )
+            
+        if args.mode == "iid":
+            ts = [np.random.choice(len(p), args.hmcsample, p=p) for p in T]
+            update = cr + GAMMA * np.array(
+                [
+                    np.sum(T[row][ts[row]] * Q_max[ts[row]])
                     for row in range(T.shape[0])
                 ]
             )
@@ -313,8 +323,9 @@ def main():
 
         Q[cs, ca] = update
         cs = [np.random.choice(len(p), p=p) for p in T]  # sample next state
-     
-    print(Qerror)                              
+        
+    
+                                  
     print("Qmax", np.amax(Q))
     print("Qmin", np.amin(Q))
     
