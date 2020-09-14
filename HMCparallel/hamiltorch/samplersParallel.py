@@ -5,6 +5,8 @@ from enum import Enum
 from numpy import pi
 from . import util
 
+import time
+
 
 class Sampler(Enum):
     HMC = 1
@@ -37,16 +39,19 @@ def leapfrog(
     params, momentum, log_prob_func, steps=10, step_size=0.1, inv_mass=None,
 ):
     # params: shape (N, sdim)
-
+    
     def params_grad(p):
         p = p.detach().requires_grad_()
         log_prob = log_prob_func(p)
         p = collect_gradients(log_prob, p)
         return p.grad
-
+    
+    
     ret_params = []
     ret_momenta = []
     momentum += 0.5 * step_size * params_grad(params)
+    
+
     for n in range(steps):
         if inv_mass is None:
             params = params + step_size * momentum
@@ -58,10 +63,15 @@ def leapfrog(
                 ).view(-1)
             else:
                 params = params + step_size * inv_mass * momentum
+                
         p_grad = params_grad(params)
+        
         momentum += step_size * p_grad
+        
         ret_params.append(params.clone())
         ret_momenta.append(momentum.clone())
+        
+    
     # only need last for Hamiltoninian check (see p.14) https://arxiv.org/pdf/1206.1901.pdf
     ret_momenta[-1] = ret_momenta[-1] - 0.5 * step_size * p_grad.clone()
     # import pdb; pdb.set_trace()
@@ -115,21 +125,26 @@ def sample(
             mass = 1 / inv_mass
 
     params = params_init.clone().requires_grad_()
-    ret_params = [[c.clone()] for c in params]
-
+    
+    ret_params = [[c.clone()] for c in params] 
+    
     list(torch.split(params.clone(), 1, dim=0))
+    
     num_rejected = [0 for _ in range(len(params))]
-
     hmcSamples = [[] for _ in range(len(params))]
 
-    util.progress_bar_init("Sampling HMC", num_samples, "Samples")
+    
+#     util.progress_bar_init("Sampling HMC", num_samples, "Samples")
 
     for n in range(num_samples):
-        util.progress_bar_update(n)
+#         util.progress_bar_update(n)
+        
 
         momentum = gibbs(params, mass=mass,)
+        
 
         ham = hamiltonian(params, momentum, log_prob_func, inv_mass=inv_mass,)
+        
 
         leapfrog_params, leapfrog_momenta = leapfrog(
             params,
@@ -139,7 +154,9 @@ def sample(
             step_size=step_size,
             inv_mass=inv_mass,
         )
-
+        
+        
+        start = time.time()
         params = leapfrog_params[-1].detach().requires_grad_()
         momentum = leapfrog_momenta[-1]
 
@@ -160,21 +177,23 @@ def sample(
             ),
             dim=0,
         )
+        
 
         condition = condition1 * condition2
-
+        
         for c in range(len(params)):
             if condition[c]:
                 if n > burn:
-                    ret_params[c].extend(leapfrog_params[c])
-                    hmcSamples[c].append(leapfrog_params[c])
+                    ret_params[c].append(leapfrog_params[-1][c])
+                    hmcSamples[c].append(leapfrog_params[-1][c])
             else:
                 num_rejected[c] += 1
                 params[c] = ret_params[c][-1]
 
-    util.progress_bar_end(
-        "Acceptance Rate {:.2f}".format(1 - num_rejected / num_samples)
-    )  # need to adapt for burn
+        
+#     util.progress_bar_end(
+# #         "Acceptance Rate {:.2f}".format(1 - num_rejected / num_samples)
+#     )  # need to adapt for burn
 
     return hmcSamples
 

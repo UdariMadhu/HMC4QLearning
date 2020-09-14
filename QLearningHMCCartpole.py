@@ -4,7 +4,7 @@ import numpy as np
 from scipy.stats import multivariate_normal
 import argparse
 import math
-import torch
+import os
 
 import sys
 
@@ -21,7 +21,7 @@ GAMMA = 0.95
 # cart pole parameters
 
 g = 9.8
-l =0.5
+l = 0.5
 M = 1
 m = 0.1
 tau = 0.1
@@ -66,23 +66,38 @@ def get_state_action_bias_reward(statespace, actionspace, args):
         Generates bias and rewards for all state-action pairs
     """
     assert len(np.array(args.srange).shape) == 1
-    #assert args.adim == 1
-    
+    # assert args.adim == 1
+
     coords = np.array(statespace).reshape(args.sdim, -1).transpose()
     coorda = actionspace[0]
     c = np.array(list(np.ndindex(len(coords), len(coorda))))
     cartcoord = np.c_[coords[c[:, 0]], coorda[c[:, 1]]]
-    
-    angaccel = (g * np.sin(cartcoord[:,0]) - (cartcoord[:, -1] + m * l * cartcoord[:,1] ** 2 * np.sin(cartcoord[:,0])) * np.cos(cartcoord[:,0]) / (M + m)) / (l * (4 / 3 - (m * np.cos(cartcoord[:,0]) ** 2) / (M+m)))
-    linaccel = (cartcoord[:, -1] + m * l *(cartcoord[:,0] ** 2 * np.sin(cartcoord[:,0]) - angaccel * np.cos(cartcoord[:,0]))) / (M + m)
-    
-    bias = np.c_[tau*cartcoord[:,1], tau*angaccel, tau*cartcoord[:,2], tau*linaccel]
-    
+
+    angaccel = (
+        g * np.sin(cartcoord[:, 0])
+        - (cartcoord[:, -1] + m * l * cartcoord[:, 1] ** 2 * np.sin(cartcoord[:, 0]))
+        * np.cos(cartcoord[:, 0])
+        / (M + m)
+    ) / (l * (4 / 3 - (m * np.cos(cartcoord[:, 0]) ** 2) / (M + m)))
+    linaccel = (
+        cartcoord[:, -1]
+        + m
+        * l
+        * (
+            cartcoord[:, 0] ** 2 * np.sin(cartcoord[:, 0])
+            - angaccel * np.cos(cartcoord[:, 0])
+        )
+    ) / (M + m)
+
+    bias = np.c_[
+        tau * cartcoord[:, 1], tau * angaccel, tau * cartcoord[:, 2], tau * linaccel
+    ]
+
     reward = np.reshape(np.cos(cartcoord[:, 0]) ** 4, (len(coords), len(coorda)))
-    
+
     # convert to discrete co-ordinates
     statesrange = np.reshape(args.srange, (args.sdim, -1))
-    sr = np.array([np.linspace(a, b, args.ssize) for (a, b) in statesrange]) 
+    sr = np.array([np.linspace(a, b, args.ssize) for (a, b) in statesrange])
     bias = np.array(
         [
             np.argmin(np.abs(bias[:, i : i + 1] - sr[i : i + 1]), -1)
@@ -115,7 +130,9 @@ def get_state_transition(states, actions, statespace, biasmat, args):
     neworigins = unfold(states, statespace.shape)  # add noise later
 
     bias = biasmat[states, actions]
-    neworigins = np.clip(np.array(neworigins) + bias, 0, args.ssize-1) # saturate when neworigin exceed boundary
+    neworigins = np.clip(
+        np.array(neworigins) + bias, 0, args.ssize - 1
+    )  # saturate when neworigin exceed boundary
     left = index_origin - neworigins
 
     x = np.array(list(np.ndindex(*[args.ssize for i in range(args.sdim)])))
@@ -198,7 +215,9 @@ def main():
     parser.add_argument(
         "--hmcsample", type=int, default=200, help="number of samples in hmc"
     )
-    parser.add_argument("--cSig", type=float, default=50, help="cutoff parameter for sigmoid")
+    parser.add_argument(
+        "--cSig", type=float, default=50, help="cutoff parameter for sigmoid"
+    )
     parser.add_argument("--HMCseed", type=int, default=123)
     parser.add_argument(
         "--mode", type=str, default="complete", choices=("complete", "hmc", "iid")
@@ -209,38 +228,45 @@ def main():
 
     print(args)
 
-    # setup
-    hamiltorch.set_random_seed(args.HMCseed)
-    params_init = torch.zeros(args.sdim)
-
     # create state-space and action-space
     statespace, actionspace = build_spaces(args)
     Q = np.zeros([statespace[0].size, actionspace[0].size])
-    B, R = get_state_action_bias_reward(statespace, actionspace, args) # reward and bias
-    
+    B, R = get_state_action_bias_reward(
+        statespace, actionspace, args
+    )  # reward and bias
+
     Qerror = np.zeros([args.steps])
     
+    os.makedirs("./results", exist_ok=True)
+    errorfile = f"./results/qerror_cartpole_{args.mode}.npy"
+
     cs = np.random.randint(0, statespace[0].size, args.samples)  # current states
 
     # run agent for specific steps
+
+    hamiltorch.set_random_seed(args.HMCseed)
+
     for ii in range(args.steps):
-        
+
         # randomly choosing state-action pairs
-        cs = np.random.randint(0, statespace[0].size, args.samples) # current states
-        ca = np.random.randint(0, actionspace[0].size, args.samples) # current states
-        
-#         ca = sampling_policy(cs, Q)  # current actions
+        cs = np.random.randint(0, statespace[0].size, args.samples)  # current states
+        ca = np.random.randint(0, actionspace[0].size, args.samples)  # current states
+
+        #         ca = sampling_policy(cs, Q)  # current actions
         cr = R[cs, ca]  # current rewards
 
         T = get_state_transition(
             cs, ca, statespace[0], B, args
         )  # state-transition matrix
-        
+
         Q_max = np.max(Q, axis=-1)
 
         if args.mode == "hmc":
+
+            #             params_init = torch.zeros(args.samples, args.sdim)
+
             hmcorigin = np.clip(
-                np.array(unfold(cs, statespace[0].shape)) + B[cs, ca], 0, args.ssize-1
+                np.array(unfold(cs, statespace[0].shape)) + B[cs, ca], 0, args.ssize - 1
             )
 
             hmcorigin = [hmcorigin[:, i] for i in range(hmcorigin.shape[-1])]
@@ -255,34 +281,46 @@ def main():
                 np.array([s[hmcorigin] for s in statespace])
             ).transpose(1, 0)
 
-            hmcoords = []
-            for i, _ in enumerate(cs):
-                params_hmc = hamiltorch.sample(
-                    log_prob_func=getlogprobs(
-                        c=args.cSig,
-                        mean=hmcorigin[i].float(),
-                        stddev=hmcstdev,
-                        srange=torch.tensor(statesrange).float(),
-                    ),
-                    params_init=params_init,
-                    num_samples=args.hmcsample,
-                    step_size=args.stepsize,
-                    num_steps_per_sample=args.trlen,
-                    burn=args.burn,
+            params_init = torch.tensor(np.copy(hmcorigin)).float()
+
+            params_hmc = hamiltorch.sample(
+                log_prob_func=getlogprobs(
+                    c=args.cSig,
+                    mean=hmcorigin.float(),
+                    stddev=hmcstdev,
                     srange=torch.tensor(statesrange).float(),
-                )
-                coords_hmc = getHMCsamples(params_hmc, args.trlen).data.numpy()
+                ),
+                params_init=params_init,
+                num_samples=args.hmcsample,
+                step_size=args.stepsize,
+                num_steps_per_sample=args.trlen,
+                burn=args.burn,
+                srange=torch.tensor(statesrange).float(),
+            )
+
+            coords_hmc = getHMCsamples(params_hmc)
+
+            hmcoords = []
+
+            sr = np.array([np.linspace(a, b, args.ssize) for (a, b) in statesrange])
+            for j, _ in enumerate(cs):
 
                 # map to closest and convert to co-ordinates
-                sr = np.array([np.linspace(a, b, args.ssize) for (a, b) in statesrange])
-                coords_hmc = np.array(
+                chtemp = np.array(
                     [
-                        np.argmin(np.abs(coords_hmc[:, i : i + 1] - sr[i : i + 1]), -1)
+                        np.argmin(
+                            np.abs(
+                                coords_hmc[j][:, i : i + 1].data.numpy() - sr[i : i + 1]
+                            ),
+                            -1,
+                        )
                         for i in range(args.sdim)
                     ]
                 ).T
 
-                hmcoords.append(coords_hmc)
+                hmcoords.append(chtemp)
+
+            #####
 
             hmcoords = [foldParallel(i, statespace[0].shape) for i in hmcoords]
 
@@ -293,14 +331,11 @@ def main():
                     for row in range(T.shape[0])
                 ]
             )
-            
+
         if args.mode == "iid":
             ts = [np.random.choice(len(p), args.hmcsample, p=p) for p in T]
             update = cr + GAMMA * np.array(
-                [
-                    np.sum(T[row][ts[row]] * Q_max[ts[row]])
-                    for row in range(T.shape[0])
-                ]
+                [np.sum(T[row][ts[row]] * Q_max[ts[row]]) for row in range(T.shape[0])]
             )
 
         # update step without hmc
@@ -312,23 +347,21 @@ def main():
                 ),
                 axis=-1,
             )
-            
-        Qerror[ii] = np.linalg.norm(Q[cs, ca] - update)
 
-        print(
-            "L2 norm of difference in Q-matrix: {:.3f}".format(
-                np.linalg.norm(Q[cs, ca] - update)
-            )
-        )
+        Qerror[ii] = np.linalg.norm(Q[cs, ca] - update)
+        print("L2 norm of difference in Q-matrix: {:.3f}".format(Qerror[ii]))
 
         Q[cs, ca] = update
         cs = [np.random.choice(len(p), p=p) for p in T]  # sample next state
-        
-    
-                                  
+
+        if not ii % 10:
+            np.save(errorfile, Qerror)
+
+    np.save(errorfile, Qerror)
+
     print("Qmax", np.amax(Q))
     print("Qmin", np.amin(Q))
-    
+
     rank = np.linalg.matrix_rank(Q)
     print("Rank", rank)
 

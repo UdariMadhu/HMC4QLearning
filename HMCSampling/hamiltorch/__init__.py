@@ -1,4 +1,4 @@
-__version__ = '0.3.1.dev3'
+__version__ = "0.3.1.dev3"
 
-from .samplers import *
+from .samplersParallel import *
 from .util import set_random_seed
