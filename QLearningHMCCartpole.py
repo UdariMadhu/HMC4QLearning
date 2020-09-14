@@ -236,7 +236,7 @@ def main():
     )  # reward and bias
 
     Qerror = np.zeros([args.steps])
-    
+
     os.makedirs("./results", exist_ok=True)
     errorfile = f"./results/qerror_cartpole_{args.mode}.npy"
 

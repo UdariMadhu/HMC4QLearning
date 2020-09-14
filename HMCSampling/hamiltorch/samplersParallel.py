@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from enum import Enum
-
+import time
 from numpy import pi
 from . import util
 
@@ -47,6 +47,7 @@ def leapfrog(
     ret_params = []
     ret_momenta = []
     momentum += 0.5 * step_size * params_grad(params)
+
     for n in range(steps):
         if inv_mass is None:
             params = params + step_size * momentum
@@ -58,10 +59,12 @@ def leapfrog(
                 ).view(-1)
             else:
                 params = params + step_size * inv_mass * momentum
+
         p_grad = params_grad(params)
         momentum += step_size * p_grad
         ret_params.append(params.clone())
         ret_momenta.append(momentum.clone())
+
     # only need last for Hamiltoninian check (see p.14) https://arxiv.org/pdf/1206.1901.pdf
     ret_momenta[-1] = ret_momenta[-1] - 0.5 * step_size * p_grad.clone()
     # import pdb; pdb.set_trace()
@@ -122,11 +125,11 @@ def sample(
 
     hmcSamples = [[] for _ in range(len(params))]
 
-#     util.progress_bar_init("Sampling HMC", num_samples, "Samples")
+    #     util.progress_bar_init("Sampling HMC", num_samples, "Samples")
 
     for n in range(num_samples):
-#         util.progress_bar_update(n)
-        
+        #         util.progress_bar_update(n)
+
         momentum = gibbs(params, mass=mass,)
 
         ham = hamiltonian(params, momentum, log_prob_func, inv_mass=inv_mass,)
@@ -171,10 +174,10 @@ def sample(
             else:
                 num_rejected[c] += 1
                 params[c] = ret_params[c][-1]
-        
-#     util.progress_bar_end(
-# #         "Acceptance Rate {:.2f}".format(1 - num_rejected / num_samples)
-#     )  # need to adapt for burn
+
+    #     util.progress_bar_end(
+    # #         "Acceptance Rate {:.2f}".format(1 - num_rejected / num_samples)
+    #     )  # need to adapt for burn
 
     return hmcSamples
 
