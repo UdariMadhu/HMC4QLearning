@@ -13,7 +13,7 @@ from RunHMC import getHMCsamples, getlogprobs
 import torch
 import torch.nn as nn
 import hamiltorch
-
+from MatrixEstimation import SoftImpute
 
 EPSILON = 0.05
 GAMMA = 0.95
@@ -349,9 +349,19 @@ def main():
             )
 
         Qerror[ii] = np.linalg.norm(Q[cs, ca] - update)
-        print("L2 norm of difference in Q-matrix: {:.3f}".format(Qerror[ii]))
+        # print("L2 norm of difference in Q-matrix: {:.3f}".format(Qerror[ii]))
 
-        Q[cs, ca] = update
+        Q_dummy = np.copy(Q)
+        Q_dummy[cs, ca] = update
+        mask = np.ones_like(Q)
+        mask[cs, ca] = 0.0
+        Qr = SoftImpute(max_rank=5, verbose=False).solve(Q_dummy, mask.astype(np.bool))
+        print(
+            "L2 norm of difference in Q-matrix: {:.3f}".format(np.linalg.norm(Qr - Q))
+        )
+
+        Q = Qr  # update
+
         cs = [np.random.choice(len(p), p=p) for p in T]  # sample next state
 
         if not ii % 10:
