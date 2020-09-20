@@ -125,10 +125,10 @@ def sample(
 
     hmcSamples = [[] for _ in range(len(params))]
 
-    #     util.progress_bar_init("Sampling HMC", num_samples, "Samples")
+#     util.progress_bar_init("Sampling HMC", num_samples, "Samples")
 
     for n in range(num_samples):
-        #         util.progress_bar_update(n)
+#         util.progress_bar_update(n)
 
         momentum = gibbs(params, mass=mass,)
 
@@ -175,9 +175,10 @@ def sample(
                 num_rejected[c] += 1
                 params[c] = ret_params[c][-1]
 
-    #     util.progress_bar_end(
-    # #         "Acceptance Rate {:.2f}".format(1 - num_rejected / num_samples)
-    #     )  # need to adapt for burn
+#         util.progress_bar_end(
+#             "Acceptance Rate {:.2f}".format(1 - num_rejected[-1] / num_samples)
+#         )  # need to adapt for burn
+        print("Acceptance rate = ", format(1 - num_rejected[-1] / num_samples))
 
     return hmcSamples
 

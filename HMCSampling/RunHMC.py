@@ -77,9 +77,6 @@ def main():
     parser.add_argument(
         "--scov", type=float, nargs="+", help="Convarince of Gaussian ",
     )
-    parser.add_argument(
-        "--mean", type=float, nargs="+", help="Mean of Gaussian ",
-    )
     parser.add_argument("--samples", type=int, default=100)
 
     # HMC
@@ -103,11 +100,9 @@ def main():
 
     args.scov = np.array(args.scov)
 
-    n = 100
-
     # setup
     hamiltorch.set_random_seed(args.HMCseed)
-    params_init = torch.zeros(n, args.sdim)
+    params_init = torch.zeros(args.samples, args.sdim)
 
     statesrange = np.reshape(args.srange, (args.sdim, -1))
 
@@ -115,8 +110,6 @@ def main():
         np.sqrt(args.scov) * (statesrange[:, 1] - statesrange[:, 0]) * np.eye(args.sdim)
     ).float()
 
-    #     hmcmean = torch.tensor(args.mean).float()
-    #     hmcmean = torch.cat([torch.zeros(1, args.sdim), torch.ones(1, args.sdim)], dim = 0)
     hmcmean = torch.zeros_like(params_init)
 
     params_hmc = hamiltorch.sample(
@@ -135,55 +128,55 @@ def main():
     )
 
     coords_hmc = getHMCsamples(params_hmc)
-
+    
     # IID sampling
-    #     targetDis = torch.distributions.MultivariateNormal(
-    #         hmcmean, hmcstdev ** 2
-    #     )
+    targetDis = torch.distributions.MultivariateNormal(
+        hmcmean, hmcstdev ** 2
+    )
 
-    #     sample_iid = targetDis.sample((20 * args.hmcsample,))
+    coords_iid = targetDis.sample((args.hmcsample,))
 
-    #     ind_iid = torch.prod(
-    #                     torch.cat(
-    #                         [
-    #                            ((statesrange[i, 0] <= sample_iid[:, i]).float() * (sample_iid[:, i] <= statesrange[i, 1]).float()).view(1, -1)
-    #                             for i in range(args.sdim)
-    #                         ]
-    #                     ), dim=0
-    #                 ).nonzero()[:, 0]
+    # Map to the nearest state
+    
+    hmcoords = []
+    iidcoords = []
+    
+    sr = np.array([np.linspace(a, b, args.ssize) for (a, b) in statesrange])
+    
+    for j in range(args.samples):
 
-    #     print(ind_iid.shape, len(coords_hmc[:, 0]))
-    #     coords_iid = sample_iid[ind_iid[: len(coords_hmc[:, 0])]]
+        # map to closest and convert to co-ordinates
+        chtemp = np.array(
+            [
+                np.argmin(
+                    np.abs(
+                        coords_hmc[j][:, i : i + 1].data.numpy() - sr[i : i + 1]
+                    ),
+                    -1,
+                )
+                for i in range(args.sdim)
+            ]
+        ).T
+        
+        chtemp = np.array([sr[i][chtemp[:, i]] for i in range(args.sdim)]).T
 
-    #     coords_hmc = torch.tensor(coords_hmc)
-
-    # Round off HMC and IID samples
-
-    #     discritise = 1
-    #     coords_hmc = torch.round(coords_hmc * 10 ** discritise) / 10 ** discritise
-    #     coords_iid = torch.round(coords_iid * 10 ** discritise) / 10 ** discritise
-
-    #     print(coords_hmc.shape)
-    #     print(coords_iid.shape)
-
-    # print(coords_hmc)
+        hmcoords.append(chtemp)
+        
+    hmcEmpMean = torch.cat([torch.tensor(np.mean(c, axis=0)).unsqueeze(0) for c in hmcoords])
+    
+    iidEmpmean = coords_iid.mean(0)
 
     print("True mean:            ", hmcmean)
+    print("HMC mean:            ", hmcEmpMean)
+    print("IID mean:            ", iidEmpmean)
+
+
     print(
-        "HMC mean:            ",
-        torch.cat([c.mean(0).data.unsqueeze(0) for c in coords_hmc]),
+        "HMC mean norm:            ", torch.sum(hmcEmpMean ** 2, dim=-1)
     )
-    #     print("IID mean:            ", coords_iid.mean(0))
-
-    hmcEmpMean = torch.cat([c.mean(0).data.unsqueeze(0) for c in coords_hmc])
-
-
-#     print(
-#         "HMC mean norm:            ", hmcEmpMean
-#     )
-#     print(
-#         "IID mean norm:            ", torch.dot(coords_iid.mean(0), coords_iid.mean(0))
-#     )
+    print(
+        "IID mean norm:            ", torch.sum(iidEmpmean ** 2, dim=-1)
+    )
 
 
 if __name__ == "__main__":

@@ -90,7 +90,7 @@ def get_state_action_bias_reward(statespace, actionspace, args):
     ) / (M + m)
 
     bias = np.c_[
-        tau * cartcoord[:, 1], tau * angaccel, tau * cartcoord[:, 2], tau * linaccel
+        tau * cartcoord[:, 1], tau * angaccel, tau * cartcoord[:, 3], tau * linaccel
     ]
 
     reward = np.reshape(np.cos(cartcoord[:, 0]) ** 4, (len(coords), len(coorda)))
@@ -202,7 +202,6 @@ def main():
     )
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--steps", type=int, default=1000, help="Number of time steps")
-    parser.add_argument("--seed", type=int, default=27082020)
 
     # HMC
     parser.add_argument(
@@ -222,7 +221,10 @@ def main():
     parser.add_argument(
         "--mode", type=str, default="complete", choices=("complete", "hmc", "iid")
     )
-
+    parser.add_argument(
+        "--matComp", action="store_true", default=False, help="Matrix completion"
+    )
+    
     args = parser.parse_args()
     args.scov = np.array(args.scov)
 
@@ -239,6 +241,7 @@ def main():
 
     os.makedirs("./results", exist_ok=True)
     errorfile = f"./results/qerror_cartpole_{args.mode}.npy"
+    qfile = f"./results/qFinal_cartpole_{args.mode}.npy"
 
     cs = np.random.randint(0, statespace[0].size, args.samples)  # current states
 
@@ -249,10 +252,11 @@ def main():
     for ii in range(args.steps):
 
         # randomly choosing state-action pairs
-        cs = np.random.randint(0, statespace[0].size, args.samples)  # current states
+#         cs = np.random.randint(0, statespace[0].size, args.samples)  # current states
         ca = np.random.randint(0, actionspace[0].size, args.samples)  # current states
 
-        #         ca = sampling_policy(cs, Q)  # current actions
+#         ca = sampling_policy(cs, Q)  # current actions
+        
         cr = R[cs, ca]  # current rewards
 
         T = get_state_transition(
@@ -347,32 +351,45 @@ def main():
                 ),
                 axis=-1,
             )
+        
+        if args.matComp == True:
 
-        Qerror[ii] = np.linalg.norm(Q[cs, ca] - update)
-        # print("L2 norm of difference in Q-matrix: {:.3f}".format(Qerror[ii]))
+            Q_dummy = np.copy(Q)
+            Q_dummy[cs, ca] = update
+            mask = np.ones_like(Q)
+            mask[cs, ca] = 0.0
+            Qr = SoftImpute(max_rank=1, verbose=False).solve(Q_dummy, mask.astype(np.bool))
+            Qerror[ii] = np.linalg.norm(Q - Qr)
 
-        Q_dummy = np.copy(Q)
-        Q_dummy[cs, ca] = update
-        mask = np.ones_like(Q)
-        mask[cs, ca] = 0.0
-        Qr = SoftImpute(max_rank=5, verbose=False).solve(Q_dummy, mask.astype(np.bool))
-        print(
-            "L2 norm of difference in Q-matrix: {:.3f}".format(np.linalg.norm(Qr - Q))
-        )
-
-        Q = Qr  # update
-
+            Q = Qr  # matrix completion
+            
+            u, s, v = np.linalg.svd(Q)
+    
+            rank = np.where(np.cumsum(s) > 0.8*np.cumsum(s)[-1])[0][0]
+            print("rank = ",rank)
+            
+        else:
+            
+            Qerror[ii] = np.linalg.norm(Q[cs, ca] - update)
+            Q[cs, ca] = update
+            
+        print("L2 norm of difference in Q-matrix: {:.3f}".format(Qerror[ii]))
+        
         cs = [np.random.choice(len(p), p=p) for p in T]  # sample next state
 
         if not ii % 10:
             np.save(errorfile, Qerror)
 
     np.save(errorfile, Qerror)
+    np.save(qfile, Q)
+    
+    u, s, v = np.linalg.svd(Q)
+    
+    rank = np.where(np.cumsum(s) > 0.99*np.cumsum(s)[-1])[0][0]
 
     print("Qmax", np.amax(Q))
     print("Qmin", np.amin(Q))
 
-    rank = np.linalg.matrix_rank(Q)
     print("Rank", rank)
 
 
